@@ -29,6 +29,7 @@ fn extend(input: DeriveInput) -> Result<TokenStream> {
     };
 
     let generics = add_trait_bounds(input.generics, fields);
+    let generics = add_associated_ty_where_clause(generics, fields);
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     let db_struct_fields = fields.iter().map(|f| {
@@ -111,16 +112,62 @@ fn is_only_in_phantomdata(
     }
     true
 }
+
+fn add_associated_ty_where_clause(
+    mut generics: syn::Generics,
+    fields: &syn::punctuated::Punctuated<syn::Field, syn::token::Comma>,
+) -> syn::Generics {
+    for param in generics.params.clone() {
+        if let syn::GenericParam::Type(ref type_param) = param {
+            for field in fields {
+                let mut ty = &field.ty;
+                if let syn::Type::Path(syn::TypePath { ref path, .. }) = ty {
+
+                    let mut sgmt = path.segments.last().unwrap();
+                    while let syn::PathArguments::AngleBracketed(
+                        syn::AngleBracketedGenericArguments { ref args, .. },
+                    ) = sgmt.arguments
+                    {
+                        for arg in args {
+                            if let syn::GenericArgument::Type(syn::Type::Path(syn::TypePath {
+                                ref path,
+                                ..
+                            })) = arg
+                            {
+                                if path.segments.len() > 1
+                                    && path.segments[0].ident == type_param.ident
+                                {
+                                    generics
+                                        .make_where_clause()
+                                        .predicates
+                                        .push(syn::parse_quote!(#path: std::fmt::Debug));
+                                    return generics;
+                                } else {
+                                    sgmt = path.segments.last().unwrap();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    generics
+}
+
 fn add_trait_bounds(
     mut generics: syn::Generics,
     fields: &syn::punctuated::Punctuated<syn::Field, syn::token::Comma>,
 ) -> syn::Generics {
     for param in &mut generics.params {
         if let syn::GenericParam::Type(ref mut type_param) = param {
-            if !is_only_in_phantomdata(type_param, fields) {
-                type_param.bounds.push(syn::parse_quote!(std::fmt::Debug))
+            if is_only_in_phantomdata(type_param, fields) {
+                continue;
             }
+            type_param.bounds.push(syn::parse_quote!(std::fmt::Debug));
         }
     }
+
     generics
 }
