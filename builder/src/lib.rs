@@ -193,19 +193,6 @@ fn impl_funcs(name: &Ident, data: &Data) -> Result<TokenStream> {
             })
         });
 
-        let checks = fields.named.iter().map(|f| {
-            let name = &f.ident;
-
-            if has_each(f)?.is_some() {
-                return Ok(quote!())
-            }
-            Ok(quote_spanned! {f.span() =>
-                if self.#name.is_none() {
-                    return std::result::Result::Err(<std::boxed::Box<dyn std::error::Error>>::from(format!("{} is None", stringify!(#name))));
-                }
-            })
-        });
-
         let inits = fields.named.iter().map(|f| {
             let name = &f.ident;
 
@@ -215,19 +202,16 @@ fn impl_funcs(name: &Ident, data: &Data) -> Result<TokenStream> {
                 });
             }
             Ok(quote_spanned! {f.span() =>
-                #name: self.#name.clone().unwrap(),
+                #name: self.#name.clone().ok_or(concat!(stringify!(#name), "is None"))?,
             })
         });
 
         let funcs: Vec<_> = funcs.collect::<Result<_>>()?;
-        let checks: Vec<_> = checks.collect::<Result<_>>()?;
         let inits: Vec<_> = inits.collect::<Result<_>>()?;
         Ok(quote! {
             #( #funcs )*
 
             fn build(&mut self) -> std::result::Result<#name, std::boxed::Box<dyn std::error::Error>> {
-                #( #checks )*
-
                 std::result::Result::Ok(#name {
                     #( #inits )*
                 })
