@@ -28,7 +28,7 @@ fn extend(input: DeriveInput) -> Result<TokenStream> {
         unimplemented!()
     };
 
-    let generics = add_trait_bounds(input.generics);
+    let generics = add_trait_bounds(input.generics, fields);
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     let db_struct_fields = fields.iter().map(|f| {
@@ -68,10 +68,58 @@ fn format_str(f: &syn::Field) -> Option<String> {
     None
 }
 
-fn add_trait_bounds(mut generics: syn::Generics) -> syn::Generics {
+fn has_t_inside(t: &syn::TypeParam, path: &syn::Path) -> bool {
+    let mut sgmt = path.segments.last().unwrap();
+    while let syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments {
+        ref args,
+        ..
+    }) = sgmt.arguments
+    {
+        for arg in args {
+            if let syn::GenericArgument::Type(syn::Type::Path(syn::TypePath { ref path, .. })) = arg
+            {
+                if path.is_ident(&t.ident) {
+                    return true;
+                } else {
+                    sgmt = path.segments.last().unwrap()
+                }
+            }
+        }
+    }
+    false
+}
+
+fn is_only_in_phantomdata(
+    ty_param: &syn::TypeParam,
+    fields: &syn::punctuated::Punctuated<syn::Field, syn::token::Comma>,
+) -> bool {
+    for field in fields {
+        if let syn::Type::Path(syn::TypePath { ref path, .. }) = field.ty {
+            let segment = path.segments.last().unwrap();
+            if segment.ident == ty_param.ident {
+                return false;
+            }
+
+            if segment.ident == "PhantomData" {
+                continue;
+            }
+
+            if has_t_inside(ty_param, path) {
+                return false;
+            }
+        }
+    }
+    true
+}
+fn add_trait_bounds(
+    mut generics: syn::Generics,
+    fields: &syn::punctuated::Punctuated<syn::Field, syn::token::Comma>,
+) -> syn::Generics {
     for param in &mut generics.params {
         if let syn::GenericParam::Type(ref mut type_param) = param {
-            type_param.bounds.push(syn::parse_quote!(std::fmt::Debug))
+            if !is_only_in_phantomdata(type_param, fields) {
+                type_param.bounds.push(syn::parse_quote!(std::fmt::Debug))
+            }
         }
     }
     generics
