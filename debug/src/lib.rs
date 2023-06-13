@@ -28,6 +28,9 @@ fn extend(input: DeriveInput) -> Result<TokenStream> {
         unimplemented!()
     };
 
+    let generics = add_trait_bounds(input.generics);
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+
     let db_struct_fields = fields.iter().map(|f| {
         let name = &f.ident;
         let fmt_str = format_str(f).unwrap_or("{:?}".into());
@@ -38,7 +41,7 @@ fn extend(input: DeriveInput) -> Result<TokenStream> {
     });
 
     Ok(quote! {
-        impl std::fmt::Debug for #name {
+        impl #impl_generics std::fmt::Debug for #name #ty_generics #where_clause {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 f.debug_struct(stringify!(#name))
                     #( .#db_struct_fields )*
@@ -63,4 +66,13 @@ fn format_str(f: &syn::Field) -> Option<String> {
         }
     }
     None
+}
+
+fn add_trait_bounds(mut generics: syn::Generics) -> syn::Generics {
+    for param in &mut generics.params {
+        if let syn::GenericParam::Type(ref mut type_param) = param {
+            type_param.bounds.push(syn::parse_quote!(std::fmt::Debug))
+        }
+    }
+    generics
 }
