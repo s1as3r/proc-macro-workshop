@@ -28,8 +28,18 @@ fn extend(input: DeriveInput) -> Result<TokenStream> {
         unimplemented!()
     };
 
-    let generics = add_trait_bounds(input.generics, fields);
-    let generics = add_associated_ty_where_clause(generics, fields);
+    let bounds = attr_bounds(&input.attrs);
+    let mut generics = input.generics;
+
+    if bounds.is_empty() {
+        generics = add_trait_bounds(generics, fields);
+        generics = add_associated_ty_where_clause(generics, fields);
+    } else {
+        let mut where_pred = generics.make_where_clause();
+        for bound in bounds {
+            where_pred.predicates.push(bound);
+        }
+    }
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     let db_struct_fields = fields.iter().map(|f| {
@@ -50,6 +60,25 @@ fn extend(input: DeriveInput) -> Result<TokenStream> {
             }
         }
     })
+}
+
+fn attr_bounds(attrs: &Vec<syn::Attribute>) -> Vec<syn::WherePredicate> {
+    let mut bounds = vec![];
+    for attr in attrs {
+        if let syn::Meta::List(ref ml) = attr.meta {
+            if ml.path.is_ident("debug") {
+                let args: syn::MetaNameValue = attr.parse_args().unwrap();
+                if args.path.is_ident("bound") {
+                    if let syn::Expr::Lit(l) = args.value {
+                        if let syn::Lit::Str(ls) = l.lit {
+                            bounds.push(ls.parse().unwrap());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    bounds
 }
 
 fn format_str(f: &syn::Field) -> Option<String> {
@@ -122,9 +151,8 @@ fn add_associated_ty_where_clause(
             for field in fields {
                 let mut ty = &field.ty;
                 if let syn::Type::Path(syn::TypePath { ref path, .. }) = ty {
-
                     let mut sgmt = path.segments.last().unwrap();
-                    while let syn::PathArguments::AngleBracketed(
+                    'outer : while let syn::PathArguments::AngleBracketed(
                         syn::AngleBracketedGenericArguments { ref args, .. },
                     ) = sgmt.arguments
                     {
@@ -141,7 +169,7 @@ fn add_associated_ty_where_clause(
                                         .make_where_clause()
                                         .predicates
                                         .push(syn::parse_quote!(#path: std::fmt::Debug));
-                                    return generics;
+                                    break 'outer;
                                 } else {
                                     sgmt = path.segments.last().unwrap();
                                 }
